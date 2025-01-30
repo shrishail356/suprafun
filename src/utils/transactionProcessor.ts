@@ -89,11 +89,50 @@ interface TransactionRecord {
     vmStatus: string;
   }
   
-  interface CombinedTransaction extends Omit<SwapTransaction & LiquidityTransaction, 'action'> {
-    type: 'swap' | 'liquidity';
+  interface TokenTransferTransaction {
+    txHash: string;
     action: string;
+    sender: string;
+    receiver: string;
+    transfer: {
+      symbol: string;
+      amount: number;
+    };
+    txFee: number;
+    confirmationTime: string;
+    gasUnitPrice: number;
+    maxGasAmount: number;
+    expirationTime: string;
+    blockHash: string;
+    blockHeight: number;
+    vmStatus: string;
+  }
+  
+  interface MintTransaction {
+    txHash: string;
+    action: string;
+    sender: string;
+    receiver: string;
+    mint: {
+      symbol: string;
+      amount: number;
+    };
+    txFee: number;
+    confirmationTime: string;
+    gasUnitPrice: number;
+    maxGasAmount: number;
+    expirationTime: string;
+    blockHash: string;
+    blockHeight: number;
+    vmStatus: string;
   }
 
+  // Update CombinedTransaction to include token transfer type
+  interface CombinedTransaction extends Omit<SwapTransaction & LiquidityTransaction & TokenTransferTransaction & MintTransaction, 'action'> {
+    type: 'swap' | 'liquidity' | 'transfer' | 'mint';
+    action: string;
+  }
+  
   function extractTokenSymbol(fullPath: string): string {
     const parts = fullPath.split("::");
     const lastPart = parts[parts.length - 1];
@@ -102,10 +141,61 @@ interface TransactionRecord {
   
   
   function convertToDecimal(amount: string, isLPToken: boolean = false): number {
+   console.log("amount", amount);
   return Number(amount) / (isLPToken ? 100_000_000 : 1_000_000);
 }
   
-  
+  export function processMintTransactions(response: { record: TransactionRecord[] }): MintTransaction[] {
+  const mintTransactions: MintTransaction[] = [];
+
+  for (const record of response.record) {
+    // Check if it's a script payload (mint transaction)
+    if (record.payload.Move.type !== "script_payload") {
+      continue;
+    }
+
+    let mint = { symbol: "", amount: 0 };
+    let receiver = "";
+
+    // Process events to get mint details
+    for (const event of record.output.Move.events) {
+      // Look for CoinDeposit event which indicates the mint destination and amount
+      if (event.type.includes("coin::CoinDeposit")) {
+        if (event.data.amount && event.data.coin_type && event.data.account) {
+          mint = {
+            symbol: extractTokenSymbol(event.data.coin_type),
+            amount: Number(event.data.amount) / 100_000_000
+          };
+          receiver = event.data.account;
+        }
+      }
+    }
+
+    // Only create a mint transaction if we found valid mint data
+    if (mint.amount > 0 && receiver) {
+      const mintTx: MintTransaction = {
+        txHash: record.hash,
+        action: "Mint",
+        sender: record.header.sender.Move,
+        receiver,
+        mint,
+        txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+        confirmationTime: record.block_header.timestamp.utc_date_time,
+        gasUnitPrice: record.header.gas_unit_price,
+        maxGasAmount: record.header.max_gas_amount,
+        expirationTime: record.header.expiration_timestamp.utc_date_time,
+        blockHash: record.block_header.hash,
+        blockHeight: record.block_header.height,
+        vmStatus: record.output.Move.vm_status
+      };
+
+      mintTransactions.push(mintTx);
+    }
+  }
+
+  return mintTransactions;
+}
+
   export function processSwapTransactions(response: { record: TransactionRecord[] }): SwapTransaction[] {
     const swapTransactions: SwapTransaction[] = [];
   
@@ -228,12 +318,63 @@ interface TransactionRecord {
     return liquidityTransactions;
   }
   
+  export function processTokenTransferTransactions(response: { record: TransactionRecord[] }): TokenTransferTransaction[] {
+    const transferTransactions: TokenTransferTransaction[] = [];
+  
+    for (const record of response.record) {
+      if (!record.payload.Move.function.includes("::supra_account::transfer_coins")) {
+        continue;
+      }
+  
+      let transfer = { symbol: "", amount: 0 };
+      let receiver = "";
+  
+      // Get receiver from payload arguments
+      if (record.payload.Move.arguments && record.payload.Move.arguments.length >= 1) {
+        receiver = record.payload.Move.arguments[0];
+      }
+  
+      // Process events to get transfer details
+      for (const event of record.output.Move.events) {
+        if (event.type.includes("coin::CoinWithdraw")) {
+          if (event.data.amount && event.data.coin_type) {
+            transfer = {
+              symbol: extractTokenSymbol(event.data.coin_type),
+              amount: Number(event.data.amount) / 100_000_000
+            };
+          }
+        }
+      }
+  
+      const transferTx: TokenTransferTransaction = {
+        txHash: record.hash,
+        action: "Transfer",
+        sender: record.header.sender.Move,
+        receiver,
+        transfer,
+        txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+        confirmationTime: record.block_header.timestamp.utc_date_time,
+        gasUnitPrice: record.header.gas_unit_price,
+        maxGasAmount: record.header.max_gas_amount,
+        expirationTime: record.header.expiration_timestamp.utc_date_time,
+        blockHash: record.block_header.hash,
+        blockHeight: record.block_header.height,
+        vmStatus: record.output.Move.vm_status
+      };
+  
+      transferTransactions.push(transferTx);
+    }
+  
+    return transferTransactions;
+  }
+
   export function processAllTransactions(response: { record: TransactionRecord[] }): CombinedTransaction[] {
     const allTransactions: CombinedTransaction[] = [];
   
     for (const record of response.record) {
       const functionName = record.payload.Move.function;
-      
+      const payloadType = record.payload.Move.type;
+
       // Process swap transactions
       if (functionName.includes("::entry::swap")) {
         let tokenIn = { symbol: "", amount: 0 };
@@ -313,6 +454,78 @@ interface TransactionRecord {
           blockHeight: record.block_header.height,
           vmStatus: record.output.Move.vm_status
         } as CombinedTransaction);
+      }
+      
+      else if (functionName.includes("::supra_account::transfer_coins")) {
+        let transfer = { symbol: "", amount: 0 };
+        let receiver = "";
+  
+        if (record.payload.Move.arguments && record.payload.Move.arguments.length >= 1) {
+          receiver = record.payload.Move.arguments[0];
+        }
+  
+        for (const event of record.output.Move.events) {
+          if (event.type.includes("coin::CoinWithdraw")) {
+            if (event.data.amount && event.data.coin_type) {
+              transfer = {
+                symbol: extractTokenSymbol(event.data.coin_type),
+                amount: Number(event.data.amount) / 100_000_000
+              };
+            }
+          }
+        }
+  
+        allTransactions.push({
+          type: 'transfer',
+          txHash: record.hash,
+          action: "Transfer",
+          sender: record.header.sender.Move,
+          receiver,
+          transfer,
+          txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+          confirmationTime: record.block_header.timestamp.utc_date_time,
+          gasUnitPrice: record.header.gas_unit_price,
+          maxGasAmount: record.header.max_gas_amount,
+          expirationTime: record.header.expiration_timestamp.utc_date_time,
+          blockHash: record.block_header.hash,
+          blockHeight: record.block_header.height,
+          vmStatus: record.output.Move.vm_status
+        } as CombinedTransaction);
+      }
+      else if (payloadType === "script_payload") {
+        let mint = { symbol: "", amount: 0 };
+        let receiver = "";
+  
+        for (const event of record.output.Move.events) {
+          if (event.type.includes("coin::CoinDeposit")) {
+            if (event.data.amount && event.data.coin_type && event.data.account) {
+              mint = {
+                symbol: extractTokenSymbol(event.data.coin_type),
+                amount: convertToDecimal(event.data.amount)
+              };
+              receiver = event.data.account;
+            }
+          }
+        }
+  
+        if (mint.amount > 0 && receiver) {
+          allTransactions.push({
+            type: 'mint',
+            txHash: record.hash,
+            action: "Mint",
+            sender: record.header.sender.Move,
+            receiver,
+            mint,
+            txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+            confirmationTime: record.block_header.timestamp.utc_date_time,
+            gasUnitPrice: record.header.gas_unit_price,
+            maxGasAmount: record.header.max_gas_amount,
+            expirationTime: record.header.expiration_timestamp.utc_date_time,
+            blockHash: record.block_header.hash,
+            blockHeight: record.block_header.height,
+            vmStatus: record.output.Move.vm_status
+          } as CombinedTransaction);
+        }
       }
     }
   

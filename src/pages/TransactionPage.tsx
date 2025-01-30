@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { processSwapTransactions, processLiquidityTransactions, processAllTransactions } from '../utils/transactionProcessor';
+import { processSwapTransactions, processLiquidityTransactions, processAllTransactions, processTokenTransferTransactions, processMintTransactions } from '../utils/transactionProcessor';
 import { Search, Loader2, Copy, Check } from 'lucide-react';
 import { 
   Card, 
@@ -77,12 +77,52 @@ interface LiquidityTransaction {
   vmStatus: string;
 }
 
-interface CombinedTransaction extends Omit<SwapTransaction & LiquidityTransaction, 'action'> {
-  type: 'swap' | 'liquidity';
+
+interface TokenTransferTransaction {
+  txHash: string;
+  action: string;
+  sender: string;
+  receiver: string;
+  transfer: {
+    symbol: string;
+    amount: number;
+  };
+  txFee: number;
+  confirmationTime: string;
+  gasUnitPrice: number;
+  maxGasAmount: number;
+  expirationTime: string;
+  blockHash: string;
+  blockHeight: number;
+  vmStatus: string;
+}
+
+interface MintTransaction {
+  txHash: string;
+  action: string;
+  sender: string;
+  receiver: string;
+  mint: {
+    symbol: string;
+    amount: number;
+  };
+  txFee: number;
+  confirmationTime: string;
+  gasUnitPrice: number;
+  maxGasAmount: number;
+  expirationTime: string;
+  blockHash: string;
+  blockHeight: number;
+  vmStatus: string;
+}
+
+interface CombinedTransaction extends Omit<SwapTransaction & LiquidityTransaction & TokenTransferTransaction & MintTransaction, 'action'> {
+  type: 'swap' | 'liquidity' | 'transfer' | 'mint';
   action: string;
 }
 
-type TransactionType = 'all' | 'swap' | 'liquidity';
+
+type TransactionType = 'all' | 'swap' | 'liquidity' | 'transfer' | 'mint';
 
 const TransactionViewer: React.FC = () => {
   const [address, setAddress] = useState<string>('');
@@ -113,6 +153,20 @@ const TransactionViewer: React.FC = () => {
       setError('');
 
       // Construct URL with query parameters
+      if (transactionType === 'mint') {
+        let url = `https://rpc-testnet.supra.com/rpc/v1/accounts/${address}/coin_transactions?count=${count}`;
+        if (startSequence) {
+          url += `&start=${startSequence}`;
+        }
+        const response = await fetch(url);
+        const data = await response.json();
+        const processedTransactions = processMintTransactions(data).map(tx => ({ ...tx, type: 'mint' as const }));
+        
+        setTransactions(processedTransactions as CombinedTransaction[]);
+        return;
+      }
+
+
       let url = `https://rpc-testnet.supra.com/rpc/v1/accounts/${address}/transactions?count=${count}`;
       if (startSequence) {
         url += `&start=${startSequence}`;
@@ -128,6 +182,9 @@ const TransactionViewer: React.FC = () => {
           break;
         case 'liquidity':
           processedTransactions = processLiquidityTransactions(data).map(tx => ({ ...tx, type: 'liquidity' as const }));
+          break;
+        case 'transfer':
+          processedTransactions = processTokenTransferTransactions(data).map(tx => ({ ...tx, type: 'transfer' as const }));
           break;
         default:
           processedTransactions = processAllTransactions(data);
@@ -160,7 +217,32 @@ const TransactionViewer: React.FC = () => {
           </span>
         </div>
       );
-    } else {
+    }
+    else if (transaction.type === 'transfer') {
+      return (
+        <div className="flex flex-col gap-1">
+          <span className="text-orange-600">
+            {transaction.transfer.amount.toFixed(6)} {transaction.transfer.symbol}
+          </span>
+          <span className="text-xs text-gray-500">
+            To: {`${transaction.receiver.slice(0, 6)}...${transaction.receiver.slice(-4)}`}
+          </span>
+        </div>
+      );
+    }
+    else if (transaction.type === 'mint') {
+      return (
+        <div className="flex flex-col gap-1">
+          <span className="text-purple-600">
+            Minted {transaction.mint.amount.toFixed(6)} {transaction.mint.symbol}
+          </span>
+          <span className="text-xs text-gray-500">
+            To: {`${transaction.receiver.slice(0, 6)}...${transaction.receiver.slice(-4)}`}
+          </span>
+        </div>
+      );
+    }
+    else {
       return (
         <div className="flex flex-col gap-1">
           {transaction.tokensAdded.map((token, index) => (
@@ -175,7 +257,7 @@ const TransactionViewer: React.FC = () => {
       );
     }
   };
-
+  
   return (
     <Card className="w-full max-w-7xl mx-auto mt-8">
       <CardHeader>
@@ -206,6 +288,8 @@ const TransactionViewer: React.FC = () => {
                 <SelectItem value="all">All Transactions</SelectItem>
                 <SelectItem value="swap">Swap Only</SelectItem>
                 <SelectItem value="liquidity">Liquidity Only</SelectItem>
+                <SelectItem value="transfer">Transfer Only</SelectItem>
+                <SelectItem value="mint">Mint Only</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -267,13 +351,17 @@ const TransactionViewer: React.FC = () => {
                   <TableRow key={tx.txHash}>
                     <TableCell className="font-medium">{index + 1}</TableCell>
                     <TableCell>
-                      <span className={`px-2 py-1 rounded-full text-xs ${
-                        tx.type === 'swap'
-                          ? "bg-blue-100 text-blue-800"
-                          : "bg-purple-100 text-purple-800"
-                      }`}>
-                        {tx.type === 'swap' ? 'Swap' : 'Liquidity'}
-                      </span>
+                    <span className={`px-2 py-1 rounded-full text-xs ${
+                      tx.type === 'swap'
+                        ? "bg-blue-100 text-blue-800"
+                        : tx.type === 'liquidity'
+                        ? "bg-purple-100 text-purple-800"
+                        : tx.type === 'transfer'
+                        ? "bg-orange-100 text-orange-800"
+                        : "bg-green-100 text-green-800"
+                    }`}>
+                      {tx.type === 'swap' ? 'Swap' : tx.type === 'liquidity' ? 'Liquidity' : tx.type === 'transfer' ? 'Transfer' : 'Mint'}
+                    </span>
                     </TableCell>
                     <TableCell className="font-mono">
                       <div className="flex items-center gap-2">
