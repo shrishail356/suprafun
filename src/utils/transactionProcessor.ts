@@ -129,8 +129,9 @@ interface TransactionRecord {
 
   // Update CombinedTransaction to include token transfer type
   interface CombinedTransaction extends Omit<SwapTransaction & LiquidityTransaction & TokenTransferTransaction & MintTransaction, 'action'> {
-    type: 'swap' | 'liquidity' | 'transfer' | 'mint';
+    type: 'swap' | 'liquidity' | 'transfer' | 'mint' | 'unknown' | 'error';
     action: string;
+    error?: string; // Optional error message
   }
   
   function extractTokenSymbol(fullPath: string): string {
@@ -368,166 +369,372 @@ interface TransactionRecord {
     return transferTransactions;
   }
 
+  // export function processAllTransactions(response: { record: TransactionRecord[] }): CombinedTransaction[] {
+  //   const allTransactions: CombinedTransaction[] = [];
+  
+  //   for (const record of response.record) {
+  //     const functionName = record.payload.Move.function;
+  //     const payloadType = record.payload.Move.type;
+
+  //     // Process swap transactions
+  //     if (functionName.includes("::entry::swap")) {
+  //       let tokenIn = { symbol: "", amount: 0 };
+  //       let tokenOut = { symbol: "", amount: 0 };
+  
+  //       for (const event of record.output.Move.events) {
+  //         if (event.type.includes("WeightedPoolSwapEvent") || event.type.includes("StablePoolSwapEvent")) {
+  //           if (event.data.token_in && event.data.token_out && event.data.amount_in && event.data.amount_out) {
+  //             tokenIn = {
+  //               symbol: extractTokenSymbol(event.data.token_in),
+  //               amount: convertToDecimal(event.data.amount_in)
+  //             };
+  //             tokenOut = {
+  //               symbol: extractTokenSymbol(event.data.token_out),
+  //               amount: convertToDecimal(event.data.amount_out)
+  //             };
+  //           }
+  //         }
+  //       }
+  
+  //       allTransactions.push({
+  //         type: 'swap',
+  //         txHash: record.hash,
+  //         action: "Swap",
+  //         sender: record.header.sender.Move,
+  //         tokenIn,
+  //         tokenOut,
+  //         txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+  //         confirmationTime: record.block_header.timestamp.utc_date_time,
+  //         gasUnitPrice: record.header.gas_unit_price,
+  //         maxGasAmount: record.header.max_gas_amount,
+  //         expirationTime: record.header.expiration_timestamp.utc_date_time,
+  //         blockHash: record.block_header.hash,
+  //         blockHeight: record.block_header.height,
+  //         vmStatus: record.output.Move.vm_status
+  //       } as CombinedTransaction);
+  //     }
+      
+  //     // Process liquidity transactions
+  //     else if (functionName.includes("::entry::add_liquidity")) {
+  //       const tokensAdded: { symbol: string; amount: number }[] = [];
+  //       let lpTokenReceived = { symbol: "", amount: 0 };
+  
+  //       for (const event of record.output.Move.events) {
+  //         if (event.type.includes("coin::CoinWithdraw")) {
+  //           if (event.data.amount && event.data.coin_type) {
+  //             tokensAdded.push({
+  //               symbol: extractTokenSymbol(event.data.coin_type),
+  //               amount: convertToDecimal(event.data.amount)
+  //             });
+  //           }
+  //         }
+  
+  //         if (event.type.includes("coin::CoinDeposit")) {
+  //           if (event.data.amount && event.data.coin_type) {
+  //             lpTokenReceived = {
+  //               symbol: extractLPSymbol(event.data.coin_type),
+  //               amount: convertToDecimal(event.data.amount, true) 
+  //             };
+  //           }
+  //         }
+  //       }
+  
+  //       allTransactions.push({
+  //         type: 'liquidity',
+  //         txHash: record.hash,
+  //         action: "Add Liquidity",
+  //         sender: record.header.sender.Move,
+  //         tokensAdded,
+  //         lpTokenReceived,
+  //         txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+  //         confirmationTime: record.block_header.timestamp.utc_date_time,
+  //         gasUnitPrice: record.header.gas_unit_price,
+  //         maxGasAmount: record.header.max_gas_amount,
+  //         expirationTime: record.header.expiration_timestamp.utc_date_time,
+  //         blockHash: record.block_header.hash,
+  //         blockHeight: record.block_header.height,
+  //         vmStatus: record.output.Move.vm_status
+  //       } as CombinedTransaction);
+  //     }
+      
+  //     else if (functionName.includes("::supra_account::transfer_coins")) {
+  //       let transfer = { symbol: "", amount: 0 };
+  //       let receiver = "";
+  
+  //       if (record.payload.Move.arguments && record.payload.Move.arguments.length >= 1) {
+  //         receiver = record.payload.Move.arguments[0];
+  //       }
+  
+  //       for (const event of record.output.Move.events) {
+  //         if (event.type.includes("coin::CoinWithdraw")) {
+  //           if (event.data.amount && event.data.coin_type) {
+  //             transfer = {
+  //               symbol: extractTokenSymbol(event.data.coin_type),
+  //               amount: Number(event.data.amount) / 100_000_000
+  //             };
+  //           }
+  //         }
+  //       }
+  
+  //       allTransactions.push({
+  //         type: 'transfer',
+  //         txHash: record.hash,
+  //         action: "Transfer",
+  //         sender: record.header.sender.Move,
+  //         receiver,
+  //         transfer,
+  //         txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+  //         confirmationTime: record.block_header.timestamp.utc_date_time,
+  //         gasUnitPrice: record.header.gas_unit_price,
+  //         maxGasAmount: record.header.max_gas_amount,
+  //         expirationTime: record.header.expiration_timestamp.utc_date_time,
+  //         blockHash: record.block_header.hash,
+  //         blockHeight: record.block_header.height,
+  //         vmStatus: record.output.Move.vm_status
+  //       } as CombinedTransaction);
+  //     }
+  //     else if (payloadType === "script_payload") {
+  //       let mint = { symbol: "", amount: 0 };
+  //       let receiver = "";
+  
+  //       for (const event of record.output.Move.events) {
+  //         if (event.type.includes("coin::CoinDeposit")) {
+  //           if (event.data.amount && event.data.coin_type && event.data.account) {
+  //             mint = {
+  //               symbol: extractTokenSymbol(event.data.coin_type),
+  //               amount: convertToDecimal(event.data.amount)
+  //             };
+  //             receiver = event.data.account;
+  //           }
+  //         }
+  //       }
+  
+  //       if (mint.amount > 0 && receiver) {
+  //         allTransactions.push({
+  //           type: 'mint',
+  //           txHash: record.hash,
+  //           action: "Mint",
+  //           sender: record.header.sender.Move,
+  //           receiver,
+  //           mint,
+  //           txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
+  //           confirmationTime: record.block_header.timestamp.utc_date_time,
+  //           gasUnitPrice: record.header.gas_unit_price,
+  //           maxGasAmount: record.header.max_gas_amount,
+  //           expirationTime: record.header.expiration_timestamp.utc_date_time,
+  //           blockHash: record.block_header.hash,
+  //           blockHeight: record.block_header.height,
+  //           vmStatus: record.output.Move.vm_status
+  //         } as CombinedTransaction);
+  //       }
+  //     }
+  //   }
+  
+  //   return allTransactions;
+  // }
+
   export function processAllTransactions(response: { record: TransactionRecord[] }): CombinedTransaction[] {
     const allTransactions: CombinedTransaction[] = [];
   
     for (const record of response.record) {
-      const functionName = record.payload.Move.function;
-      const payloadType = record.payload.Move.type;
+      // Safely access the function name and type
+      const functionName = record.payload?.Move?.function ?? '';
+      const payloadType = record.payload?.Move?.type ?? '';
 
-      // Process swap transactions
-      if (functionName.includes("::entry::swap")) {
-        let tokenIn = { symbol: "", amount: 0 };
-        let tokenOut = { symbol: "", amount: 0 };
-  
-        for (const event of record.output.Move.events) {
-          if (event.type.includes("WeightedPoolSwapEvent") || event.type.includes("StablePoolSwapEvent")) {
-            if (event.data.token_in && event.data.token_out && event.data.amount_in && event.data.amount_out) {
-              tokenIn = {
-                symbol: extractTokenSymbol(event.data.token_in),
-                amount: convertToDecimal(event.data.amount_in)
-              };
-              tokenOut = {
-                symbol: extractTokenSymbol(event.data.token_out),
-                amount: convertToDecimal(event.data.amount_out)
-              };
+      try {
+        // Process swap transactions
+        if (functionName.includes("::entry::swap")) {
+          let tokenIn = { symbol: "", amount: 0 };
+          let tokenOut = { symbol: "", amount: 0 };
+    
+          for (const event of record.output?.Move?.events ?? []) {
+            if (event.type.includes("WeightedPoolSwapEvent") || event.type.includes("StablePoolSwapEvent")) {
+              if (event.data.token_in && event.data.token_out && event.data.amount_in && event.data.amount_out) {
+                tokenIn = {
+                  symbol: extractTokenSymbol(event.data.token_in),
+                  amount: convertToDecimal(event.data.amount_in)
+                };
+                tokenOut = {
+                  symbol: extractTokenSymbol(event.data.token_out),
+                  amount: convertToDecimal(event.data.amount_out)
+                };
+              }
             }
           }
-        }
-  
-        allTransactions.push({
-          type: 'swap',
-          txHash: record.hash,
-          action: "Swap",
-          sender: record.header.sender.Move,
-          tokenIn,
-          tokenOut,
-          txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
-          confirmationTime: record.block_header.timestamp.utc_date_time,
-          gasUnitPrice: record.header.gas_unit_price,
-          maxGasAmount: record.header.max_gas_amount,
-          expirationTime: record.header.expiration_timestamp.utc_date_time,
-          blockHash: record.block_header.hash,
-          blockHeight: record.block_header.height,
-          vmStatus: record.output.Move.vm_status
-        } as CombinedTransaction);
-      }
-      
-      // Process liquidity transactions
-      else if (functionName.includes("::entry::add_liquidity")) {
-        const tokensAdded: { symbol: string; amount: number }[] = [];
-        let lpTokenReceived = { symbol: "", amount: 0 };
-  
-        for (const event of record.output.Move.events) {
-          if (event.type.includes("coin::CoinWithdraw")) {
-            if (event.data.amount && event.data.coin_type) {
-              tokensAdded.push({
-                symbol: extractTokenSymbol(event.data.coin_type),
-                amount: convertToDecimal(event.data.amount)
-              });
-            }
-          }
-  
-          if (event.type.includes("coin::CoinDeposit")) {
-            if (event.data.amount && event.data.coin_type) {
-              lpTokenReceived = {
-                symbol: extractLPSymbol(event.data.coin_type),
-                amount: convertToDecimal(event.data.amount, true) 
-              };
-            }
-          }
-        }
-  
-        allTransactions.push({
-          type: 'liquidity',
-          txHash: record.hash,
-          action: "Add Liquidity",
-          sender: record.header.sender.Move,
-          tokensAdded,
-          lpTokenReceived,
-          txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
-          confirmationTime: record.block_header.timestamp.utc_date_time,
-          gasUnitPrice: record.header.gas_unit_price,
-          maxGasAmount: record.header.max_gas_amount,
-          expirationTime: record.header.expiration_timestamp.utc_date_time,
-          blockHash: record.block_header.hash,
-          blockHeight: record.block_header.height,
-          vmStatus: record.output.Move.vm_status
-        } as CombinedTransaction);
-      }
-      
-      else if (functionName.includes("::supra_account::transfer_coins")) {
-        let transfer = { symbol: "", amount: 0 };
-        let receiver = "";
-  
-        if (record.payload.Move.arguments && record.payload.Move.arguments.length >= 1) {
-          receiver = record.payload.Move.arguments[0];
-        }
-  
-        for (const event of record.output.Move.events) {
-          if (event.type.includes("coin::CoinWithdraw")) {
-            if (event.data.amount && event.data.coin_type) {
-              transfer = {
-                symbol: extractTokenSymbol(event.data.coin_type),
-                amount: Number(event.data.amount) / 100_000_000
-              };
-            }
-          }
-        }
-  
-        allTransactions.push({
-          type: 'transfer',
-          txHash: record.hash,
-          action: "Transfer",
-          sender: record.header.sender.Move,
-          receiver,
-          transfer,
-          txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
-          confirmationTime: record.block_header.timestamp.utc_date_time,
-          gasUnitPrice: record.header.gas_unit_price,
-          maxGasAmount: record.header.max_gas_amount,
-          expirationTime: record.header.expiration_timestamp.utc_date_time,
-          blockHash: record.block_header.hash,
-          blockHeight: record.block_header.height,
-          vmStatus: record.output.Move.vm_status
-        } as CombinedTransaction);
-      }
-      else if (payloadType === "script_payload") {
-        let mint = { symbol: "", amount: 0 };
-        let receiver = "";
-  
-        for (const event of record.output.Move.events) {
-          if (event.type.includes("coin::CoinDeposit")) {
-            if (event.data.amount && event.data.coin_type && event.data.account) {
-              mint = {
-                symbol: extractTokenSymbol(event.data.coin_type),
-                amount: convertToDecimal(event.data.amount)
-              };
-              receiver = event.data.account;
-            }
-          }
-        }
-  
-        if (mint.amount > 0 && receiver) {
+    
           allTransactions.push({
-            type: 'mint',
+            type: 'swap',
             txHash: record.hash,
-            action: "Mint",
-            sender: record.header.sender.Move,
-            receiver,
-            mint,
-            txFee: record.output.Move.gas_used * record.header.gas_unit_price / 1_000_000,
-            confirmationTime: record.block_header.timestamp.utc_date_time,
-            gasUnitPrice: record.header.gas_unit_price,
-            maxGasAmount: record.header.max_gas_amount,
-            expirationTime: record.header.expiration_timestamp.utc_date_time,
-            blockHash: record.block_header.hash,
-            blockHeight: record.block_header.height,
-            vmStatus: record.output.Move.vm_status
+            action: "Swap",
+            sender: record.header?.sender?.Move ?? '',
+            tokenIn,
+            tokenOut,
+            txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+            confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+            gasUnitPrice: record.header?.gas_unit_price ?? 0,
+            maxGasAmount: record.header?.max_gas_amount ?? 0,
+            expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+            blockHash: record.block_header?.hash ?? '',
+            blockHeight: record.block_header?.height ?? 0,
+            vmStatus: record.output?.Move?.vm_status ?? ''
           } as CombinedTransaction);
         }
+        
+        // Process liquidity transactions
+        else if (functionName.includes("::entry::add_liquidity")) {
+          const tokensAdded: { symbol: string; amount: number }[] = [];
+          let lpTokenReceived = { symbol: "", amount: 0 };
+    
+          for (const event of record.output?.Move?.events ?? []) {
+            if (event.type.includes("coin::CoinWithdraw")) {
+              if (event.data.amount && event.data.coin_type) {
+                tokensAdded.push({
+                  symbol: extractTokenSymbol(event.data.coin_type),
+                  amount: convertToDecimal(event.data.amount)
+                });
+              }
+            }
+    
+            if (event.type.includes("coin::CoinDeposit")) {
+              if (event.data.amount && event.data.coin_type) {
+                lpTokenReceived = {
+                  symbol: extractLPSymbol(event.data.coin_type),
+                  amount: convertToDecimal(event.data.amount, true) 
+                };
+              }
+            }
+          }
+    
+          allTransactions.push({
+            type: 'liquidity',
+            txHash: record.hash,
+            action: "Add Liquidity",
+            sender: record.header?.sender?.Move ?? '',
+            tokensAdded,
+            lpTokenReceived,
+            txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+            confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+            gasUnitPrice: record.header?.gas_unit_price ?? 0,
+            maxGasAmount: record.header?.max_gas_amount ?? 0,
+            expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+            blockHash: record.block_header?.hash ?? '',
+            blockHeight: record.block_header?.height ?? 0,
+            vmStatus: record.output?.Move?.vm_status ?? ''
+          } as CombinedTransaction);
+        }
+        
+        // Process transfer transactions
+        else if (functionName.includes("::supra_account::transfer_coins")) {
+          let transfer = { symbol: "", amount: 0 };
+          let receiver = "";
+    
+          if (record.payload?.Move?.arguments && record.payload.Move.arguments.length >= 1) {
+            receiver = record.payload.Move.arguments[0];
+          }
+    
+          for (const event of record.output?.Move?.events ?? []) {
+            if (event.type.includes("coin::CoinWithdraw")) {
+              if (event.data.amount && event.data.coin_type) {
+                transfer = {
+                  symbol: extractTokenSymbol(event.data.coin_type),
+                  amount: Number(event.data.amount) / 100_000_000
+                };
+              }
+            }
+          }
+    
+          allTransactions.push({
+            type: 'transfer',
+            txHash: record.hash,
+            action: "Transfer",
+            sender: record.header?.sender?.Move ?? '',
+            receiver,
+            transfer,
+            txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+            confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+            gasUnitPrice: record.header?.gas_unit_price ?? 0,
+            maxGasAmount: record.header?.max_gas_amount ?? 0,
+            expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+            blockHash: record.block_header?.hash ?? '',
+            blockHeight: record.block_header?.height ?? 0,
+            vmStatus: record.output?.Move?.vm_status ?? ''
+          } as CombinedTransaction);
+        }
+        
+        // Process script_payload transactions (including mints)
+        else if (payloadType === "script_payload") {
+          let mint = { symbol: "", amount: 0 };
+          let receiver = "";
+    
+          for (const event of record.output?.Move?.events ?? []) {
+            if (event.type.includes("coin::CoinDeposit")) {
+              if (event.data.amount && event.data.coin_type && event.data.account) {
+                mint = {
+                  symbol: extractTokenSymbol(event.data.coin_type),
+                  amount: Number(event.data.amount) / 100_000_000
+                };
+                receiver = event.data.account;
+              }
+            }
+          }
+    
+          if (mint.amount > 0 && receiver) {
+            allTransactions.push({
+              type: 'mint',
+              txHash: record.hash,
+              action: "Mint",
+              sender: record.header?.sender?.Move ?? '',
+              receiver,
+              mint,
+              txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+              confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+              gasUnitPrice: record.header?.gas_unit_price ?? 0,
+              maxGasAmount: record.header?.max_gas_amount ?? 0,
+              expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+              blockHash: record.block_header?.hash ?? '',
+              blockHeight: record.block_header?.height ?? 0,
+              vmStatus: record.output?.Move?.vm_status ?? ''
+            } as CombinedTransaction);
+          }
+        }
+        
+        // Add a default case for unknown transaction types
+        else {
+          allTransactions.push({
+            type: 'unknown',
+            txHash: record.hash,
+            action: "Unknown Transaction",
+            sender: record.header?.sender?.Move ?? '',
+            txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+            confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+            gasUnitPrice: record.header?.gas_unit_price ?? 0,
+            maxGasAmount: record.header?.max_gas_amount ?? 0,
+            expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+            blockHash: record.block_header?.hash ?? '',
+            blockHeight: record.block_header?.height ?? 0,
+            vmStatus: record.output?.Move?.vm_status ?? ''
+          } as CombinedTransaction);
+        }
+      } catch (error) {
+        console.error(`Error processing transaction ${record.hash}:`, error);
+        // Add error transaction to the list
+        allTransactions.push({
+          type: 'error',
+          txHash: record.hash,
+          action: "Error Processing Transaction",
+          sender: record.header?.sender?.Move ?? '',
+          error: error instanceof Error ? error.message : String(error),
+          txFee: (record.output?.Move?.gas_used ?? 0) * (record.header?.gas_unit_price ?? 0) / 1_000_000,
+          confirmationTime: record.block_header?.timestamp?.utc_date_time ?? '',
+          gasUnitPrice: record.header?.gas_unit_price ?? 0,
+          maxGasAmount: record.header?.max_gas_amount ?? 0,
+          expirationTime: record.header?.expiration_timestamp?.utc_date_time ?? '',
+          blockHash: record.block_header?.hash ?? '',
+          blockHeight: record.block_header?.height ?? 0,
+          vmStatus: record.output?.Move?.vm_status ?? ''
+        } as CombinedTransaction);
       }
     }
   
     return allTransactions;
-  }
+}
